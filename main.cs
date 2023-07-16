@@ -11,6 +11,7 @@ using Expansions.Missions.Tests;
 using LibNoise.Models;
 using Smooth.Compare;
 using System.Diagnostics.Eventing.Reader;
+using static VehiclePhysics.ProjectPatchAsset;
 
 #region Silencers
 #pragma warning disable IDE0044
@@ -35,6 +36,7 @@ namespace kLeapDrive
 
         #region Constants
         private readonly static int c = 299_792_458;
+        private readonly static double ly = 9.461e+15;
         private readonly static float heightAboveMin = 10_000.0f;
         private readonly static float destinationLockRange = 300_000.0f; //ED Lock-Range is ~1Mm (1_000_000), default reduced to 300km for scale reasons
         private readonly static float rendezvousDistance = 8_000.0f;
@@ -48,9 +50,15 @@ namespace kLeapDrive
         [KSPField]
         public double MassLimit = double.MaxValue;
         [KSPField]
+        public double MinimumJumpTargetMass = 0.0d; //Asteroid moons shouldn't be able to be jumped to, as their gravity is too weak
+        [KSPField]
         public double SCFuelRate = 0.0d; //Consume a flat amount of fuel no matter the speed, in Elite Dangerous this rate is determined by the powerplant specifics, which is not modeled here.
         [KSPField]
+        public double FuelPerLY = 0.0d;
+        [KSPField]
         public string FuelResource = "LiquidFuel";
+        [KSPField]
+        public bool AllowNonStellarTargets = true; //Makes drive act like Capital Ship FSDs in ED, allowing you to jump to any target
         [KSPField(isPersistant = true)]
         protected bool vesselIsSupercruising = false;
         [KSPField(isPersistant = true)]
@@ -128,13 +136,13 @@ namespace kLeapDrive
         {
             if (vesselIsSupercruising)
             {
-                if (ConsumeResource(propellantID, SCFuelRate * Time.fixedDeltaTime))
+                if (part.vessel != FlightGlobals.ActiveVessel) SetSCState(false);
+                if (!ConsumeResource(propellantID, SCFuelRate * Time.fixedDeltaTime))
                 {
                     SetSCState(false);
                     ScreenMessages.PostScreenMessage("Emergency Drop: No Fuel", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
                     return;
                 }
-                if (part.vessel != FlightGlobals.ActiveVessel) SetSCState(false);
                 float throttleLevel = part.vessel.ctrlState.mainThrottle;
                 if ((part.vessel.altitude < part.vessel.mainBody.minOrbitalDistance - part.vessel.mainBody.Radius + heightAboveMin))
                 {
@@ -150,10 +158,10 @@ namespace kLeapDrive
                     currentVel = Mathf.Clamp(Mathf.Lerp(currentVel, desiredVel, accelerationRate * Time.fixedDeltaTime), speedRange[0], limitVel);
                     Vector3d translatedVector = part.vessel.GetWorldPos3D() + part.vessel.transform.up.normalized * currentVel * Time.fixedDeltaTime;
                     cbDistsToWarpLoc.Clear();
+                    //This operation might add a bit of lag, but you dont want people to warp into bodies
                     foreach (CelestialBody b in FlightGlobals.Bodies)
                     {
                         cbDistsToWarpLoc.Add(b, (translatedVector - b.position).sqrMagnitude);
-                        //This operation might add a bit of lag, but you dont want people to warp into bodies
                     }
                     CelestialBody closestBody = cbDistsToWarpLoc.Aggregate((l, r) => l.Value < r.Value ? l : r).Key;
                     if (cbDistsToWarpLoc[closestBody] > Math.Pow(closestBody.minOrbitalDistance + heightAboveMin, 2))
@@ -167,7 +175,6 @@ namespace kLeapDrive
                         ScreenMessages.PostScreenMessage("Emergency Drop: Impact Imminent", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
                         return;
                     }
-                    //if (part.vessel.targetObject != null) RendezvousCheck(); else disengageAtTgt = false;
                     disengageAtTgt = (part.vessel.targetObject != null) ? RendezvousCheck() : disengageAtTgt = false;
                     if (disengageAtTgt) flightInfoStatus = 1; else flightInfoStatus = 0;
                     if (!PauseMenu.isOpen)
@@ -255,7 +262,6 @@ namespace kLeapDrive
         //Determine if you can "lock" and rendezvous with the selected target
         public bool RendezvousCheck()
         {
-            //Vessel lockedTgt = null;
             Vessel lockedTgt = part.vessel.targetObject?.GetVessel();
             if (lockedTgt != null)
             {         
@@ -294,6 +300,8 @@ namespace kLeapDrive
             //Vector3 diff = currentVessel.patchedConicSolver.targetBody.GetTransform().position - currentVessel.GetTransform().position;
             if (targetDestination != null && targetDestination != part.vessel.mainBody && part.vessel.altitude > (part.vessel.mainBody.minOrbitalDistance - part.vessel.mainBody.Radius))
             {
+                double jumpDistance = (part.vessel.GetWorldPos3D() - targetDestination.position).magnitude;
+                ConsumeResource(propellantID, (jumpDistance / ly) * FuelPerLY);
                 HyperspaceJump(targetDestination);
             }
         }
@@ -315,7 +323,7 @@ namespace kLeapDrive
         //Consumes specified amount of fuel (returns false if there was not enough fuel, true if, well, true)
         public bool ConsumeResource(int resourceID, double amount, bool checkBeforeRequest = false)
         {
-            if (CheatOptions.InfinitePropellant) return false;
+            if (CheatOptions.InfinitePropellant) return true;
             //checkBeforeRequest to true when consuming lots of fuel (jumping)
             if (checkBeforeRequest)
             {
@@ -327,9 +335,7 @@ namespace kLeapDrive
                 
             }
             float received = (float) part.RequestResource(resourceID, amount);
-            Debug.Log(Mathf.Approximately(received, (float) amount));
-            Debug.Log(received / amount);
-            return true;
+            return Mathf.Approximately(received, (float)amount);
         }
 
         #region Static Utility Functions
