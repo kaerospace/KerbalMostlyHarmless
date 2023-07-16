@@ -87,7 +87,7 @@ $@"<b>Max. Vessel Mass:</b> {MassLimit:N2} t
 - <b>{FuelResource}:</b> {SCFuelRate:N3}/sec.
 
 <b><color=#BFFF00>Leaping</color></b>
-<b>{(AllowNonStellarTargets ? $"Can leap any body with Mass > {MinJumpTargetMass:E2}" : "Can only leap to stars")}</b>
+{(AllowNonStellarTargets ? $"<b>Can leap to any body </b>\n<i>(with Mass > {MinJumpTargetMass:E2} kg)</i>" : "<b>Can only leap to stars</b>")}
 <b>- Fuel Usage:</b>
 Minimum {MinJumpFuelUsage:N1} {FuelResource}
 or {FuelPerLY:N1} per light year
@@ -113,6 +113,12 @@ or {FuelPerLY:N1} per light year
         {
             base.OnStart(state);
             GameEvents.onEditorShipModified.Add(onEditorShipModified);
+        }
+
+        public override void OnLoad(ConfigNode node)
+        {
+            base.OnLoad(node);
+            propellantID = PartResourceLibrary.Instance.GetDefinition(FuelResource).id;
         }
 
         //Display whether or not the ship is in the mass limit for convenience
@@ -334,21 +340,12 @@ or {FuelPerLY:N1} per light year
             CelestialBody targetDestination = part.vessel.patchedConicSolver.targetBody;
             if (part.vessel.altitude < part.vessel.mainBody.minOrbitalDistance - part.vessel.mainBody.Radius) { ScreenMessages.PostScreenMessage("Cannot Jump, Mass Locked", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
             if (part.vessel.GetTotalMass() > MassLimit) { ScreenMessages.PostScreenMessage("Cannot Jump, Vessel exceeds Mass Limit", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
-            if (targetDestination is null || targetDestination == part.vessel.mainBody) { ScreenMessages.PostScreenMessage("Cannot Jump, Invalid Target", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
+            if (targetDestination is null || targetDestination == part.vessel.mainBody || !(AllowNonStellarTargets || targetDestination.isStar)) { ScreenMessages.PostScreenMessage("Cannot Jump, Invalid Target", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
             if (targetDestination.Mass < MinJumpTargetMass) { ScreenMessages.PostScreenMessage("Cannot Jump, Target too small", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
             double jumpDistance = (part.vessel.GetWorldPos3D() - targetDestination.position).magnitude;
             double fuelRequired = Math.Max(MinJumpFuelUsage, (jumpDistance / ly) * FuelPerLY);
-            Debug.Log(fuelRequired);
             if (ConsumeResource(propellantID, fuelRequired, true)) HyperspaceJump(targetDestination);
             else ScreenMessages.PostScreenMessage("Insufficient Fuel for Jump, need " + fuelRequired.ToString("F0"), 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
-            /*if (targetDestination != null && targetDestination != part.vessel.mainBody && part.vessel.altitude > (part.vessel.mainBody.minOrbitalDistance - part.vessel.mainBody.Radius))
-            {
-                double jumpDistance = (part.vessel.GetWorldPos3D() - targetDestination.position).magnitude;
-                double fuelRequired = Math.Max(MinJumpFuelUsage, (jumpDistance / ly) * FuelPerLY);
-                Debug.Log(fuelRequired);
-                if (ConsumeResource(propellantID, fuelRequired)) HyperspaceJump(targetDestination);
-                else ScreenMessages.PostScreenMessage("Insufficient Fuel for Jump, need " + fuelRequired.ToString("F0"), 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
-            }*/
         }
 
         //Actually jumps the ship
