@@ -3,18 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using UnityEngine;
 using KSP.UI.Screens.Flight;
-using System.Runtime.InteropServices.WindowsRuntime;
-using Expansions.Missions.Tests;
-using LibNoise.Models;
-using Smooth.Compare;
-using System.Diagnostics.Eventing.Reader;
-using static VehiclePhysics.ProjectPatchAsset;
-using KSP.UI;
-using static VehiclePhysics.VPPerformanceDisplay;
-using KSP.UI.Screens;
 
 #region Silencers
 #pragma warning disable IDE0044
@@ -26,7 +16,7 @@ using KSP.UI.Screens;
 namespace kLeapDrive
 {
     [KSPModule("Leap Drive")]
-    public class kFTLCore : PartModule
+    public class ModuleLeapDrive : PartModule
     {
         #region Variables
         private int propellantID;
@@ -115,9 +105,11 @@ or {FuelPerLY:N1} per light year
             GameEvents.onEditorShipModified.Add(onEditorShipModified);
         }
 
+        //Store LF ID to avoid getting the definition every frame
         public override void OnLoad(ConfigNode node)
         {
             base.OnLoad(node);
+            Debug.Log(FuelResource);
             propellantID = PartResourceLibrary.Instance.GetDefinition(FuelResource).id;
         }
 
@@ -144,7 +136,7 @@ or {FuelPerLY:N1} per light year
 
         [KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Toggle Supercruise", guiActiveUnfocused = false, isPersistent = false)]
         public void ToggleSupercruise()
-        {   
+        {
             if (part.vessel.GetTotalMass() > MassLimit)
             {
                 ScreenMessages.PostScreenMessage("Vessel exceeds mass limit, cannot engage!", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
@@ -153,12 +145,7 @@ or {FuelPerLY:N1} per light year
             }
             if (!(part.vessel.altitude < (part.vessel.mainBody.minOrbitalDistance - part.vessel.mainBody.Radius + heightAboveMin)))
             {
-                /*foreach (Part part in part.vessel.parts)
-                {
-                    var core = part.FindModuleImplementing<kFTLCore>();
-                    if (core.vesselIsSupercruising  && core != this) return;
-                }*/
-                foreach (kFTLCore core in part.vessel.FindPartModulesImplementing<kFTLCore>())
+                foreach (ModuleLeapDrive core in part.vessel.FindPartModulesImplementing<ModuleLeapDrive>())
                 {
                     if (core.vesselIsSupercruising && core != this) return;
                 }
@@ -217,6 +204,9 @@ or {FuelPerLY:N1} per light year
                     FlightInputHandler.fetch.stageLock = true;
                     TimeWarp.SetRate(0, true, postScreenMessage: false);
                 }
+                part.vessel.GetComponent<Rigidbody>().freezeRotation = true;
+                part.vessel.GetComponent<Rigidbody>().angularVelocity = Vector3.zero; //NOTE TO SELF, CONTINUE ON THIS TOMORROW
+                part.vessel.GetComponent<Rigidbody>().freezeRotation = false;
                 SetSpeedDisplay();
                 return;
                 //In case requirements were not met, leave SC
@@ -337,6 +327,7 @@ or {FuelPerLY:N1} per light year
         [KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Perform Hyperspace Jump", guiActiveUnfocused = false)]
         public void CommenceJumpSequence()
         {
+            ScreenMessages.PostScreenMessage("<color=#FF0000>Test</color>", 10.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
             CelestialBody targetDestination = part.vessel.patchedConicSolver.targetBody;
             if (part.vessel.altitude < part.vessel.mainBody.minOrbitalDistance - part.vessel.mainBody.Radius) { ScreenMessages.PostScreenMessage("Cannot Jump, Mass Locked", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
             if (part.vessel.GetTotalMass() > MassLimit) { ScreenMessages.PostScreenMessage("Cannot Jump, Vessel exceeds Mass Limit", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
@@ -415,9 +406,29 @@ or {FuelPerLY:N1} per light year
         }
         #endregion
     }
-    public class kFTLGenerator : PartModule
+    public class ModuleChargeGenerator : ModuleResourceConverter
     {
+        private readonly static char barUnit = '/';
+        private readonly static int width = 20;
+        private ScreenMessage msg = null;
 
+        public void Update()
+        {
+            Debug.Log(IsActivated);
+            if (IsActivated)
+            {
+                if (msg is null) msg = ScreenMessages.PostScreenMessage("test", 1, ScreenMessageStyle.UPPER_CENTER);
+                string chargeName = outputList[0].ResourceName; //There should only be one output resource, ignore all other ones
+                double chargeRatio = part.Resources.Get(chargeName).amount / part.Resources.Get(chargeName).maxAmount;
+                int barCharge = (int)(chargeRatio * width);
+                string progressBar = $"[{new string(barUnit, barCharge)}<color=#FFA500>{new string(barUnit, width - barCharge)}</color>]";
+                Debug.Log(progressBar);
+                ScreenMessages.RemoveMessage(msg);
+                msg = ScreenMessages.PostScreenMessage(progressBar, 1.0f, ScreenMessageStyle.UPPER_CENTER);
+                Debug.Log(msg.message);
+            }
+            else if (msg is object) ScreenMessages.RemoveMessage(msg);
+        }
     }
 }
 
