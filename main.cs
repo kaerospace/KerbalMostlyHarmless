@@ -12,23 +12,26 @@ using LibNoise.Models;
 using Smooth.Compare;
 using System.Diagnostics.Eventing.Reader;
 using static VehiclePhysics.ProjectPatchAsset;
+using KSP.UI;
+using static VehiclePhysics.VPPerformanceDisplay;
+using KSP.UI.Screens;
 
 #region Silencers
 #pragma warning disable IDE0044
 #pragma warning disable IDE0060
+#pragma warning disable IDE0075
 #pragma warning disable IDE1006
 #endregion
 
 namespace kLeapDrive
 {
-    [KSPAddon(KSPAddon.Startup.Flight, false)]
+    [KSPModule("Leap Drive")]
     public class kFTLCore : PartModule
     {
         #region Variables
         private int propellantID;
         private bool disengageAtTgt = false;
         private sbyte flightInfoStatus = -1; //-1: Not Supercruising, 0: Supercruising, 1: Ready to drop out at target
-        private string formattedVelString;
         private SpeedDisplay speedDisplay = null;
         private Color defaultTitleColor;
         private Dictionary<CelestialBody, double> cbDistsToWarpLoc = new Dictionary<CelestialBody, double>();
@@ -50,15 +53,19 @@ namespace kLeapDrive
         [KSPField]
         public double MassLimit = double.MaxValue;
         [KSPField]
-        public double MinimumJumpTargetMass = 0.0d; //Asteroid moons shouldn't be able to be jumped to, as their gravity is too weak
+        public double MinJumpTargetMass = 0.0d; //Limits minimum target mass, ex. Asteroid moons shouldn't be able to be jumped to, as their gravity is too weak
         [KSPField]
         public double SCFuelRate = 0.0d; //Consume a flat amount of fuel no matter the speed, in Elite Dangerous this rate is determined by the powerplant specifics, which is not modeled here.
+        [KSPField]
+        public double MinJumpFuelUsage = 0.0d; //In-System jumps are very cheap if calculating based on LY, to balance it, a base cost is needed
         [KSPField]
         public double FuelPerLY = 0.0d;
         [KSPField]
         public string FuelResource = "LiquidFuel";
         [KSPField]
         public bool AllowNonStellarTargets = true; //Makes drive act like Capital Ship FSDs in ED, allowing you to jump to any target
+        [KSPField(guiActive = false, guiActiveEditor = true, guiName = "Vessel within FTL Mass Limit")]
+        public bool canEngage = false;
         [KSPField(isPersistant = true)]
         protected bool vesselIsSupercruising = false;
         [KSPField(isPersistant = true)]
@@ -69,6 +76,25 @@ namespace kLeapDrive
         protected float limitVel = 30000.0f;
         #endregion
 
+        //Sets the module description in the editor (finding this function took ages, send help)
+        public override string GetInfo()
+        {
+            return
+$@"<b>Max. Vessel Mass:</b> {MassLimit:N2} t
+
+<b><color=#BFFF00>Supercruise</color></b>
+<b>Speed Range:</b> {FormatSupercruiseVelocity(speedRange[0])} to {FormatSupercruiseVelocity(speedRange[1])}
+- <b>{FuelResource}:</b> {SCFuelRate:N3}/sec.
+
+<b><color=#BFFF00>Leaping</color></b>
+<b>{(AllowNonStellarTargets ? $"Can leap any body with Mass > {MinJumpTargetMass:E2}" : "Can only leap to stars")}</b>
+<b>- Fuel Usage:</b>
+Minimum {MinJumpFuelUsage:N1} {FuelResource}
+or {FuelPerLY:N1} per light year
+(whichever is greater)";
+        }
+
+        //Store the speed display so we can mess with it later
         public void OnGUI()
         {
             if (speedDisplay == null)
@@ -82,12 +108,18 @@ namespace kLeapDrive
             }
         }
 
-        public override void OnLoad(ConfigNode node)
+        //Set up editor event hook
+        public override void OnStart(StartState state)
         {
-            base.OnLoad(node);
-            //Store ID to avoid calling GetDefinition every time
-            propellantID = PartResourceLibrary.Instance.GetDefinition(FuelResource).id;
+            base.OnStart(state);
+            GameEvents.onEditorShipModified.Add(onEditorShipModified);
+        }
 
+        //Display whether or not the ship is in the mass limit for convenience
+        public void onEditorShipModified(ShipConstruct sc)
+        {
+            canEngage = sc.GetTotalMass() < MassLimit;
+            MonoUtilities.RefreshContextWindows(part);
         }
 
         #region Action Groups
@@ -136,54 +168,55 @@ namespace kLeapDrive
         {
             if (vesselIsSupercruising)
             {
-                if (part.vessel != FlightGlobals.ActiveVessel) SetSCState(false);
+                //Requirement Checks
+                if (part.vessel != FlightGlobals.ActiveVessel) goto exit;
                 if (!ConsumeResource(propellantID, SCFuelRate * Time.fixedDeltaTime))
                 {
-                    SetSCState(false);
                     ScreenMessages.PostScreenMessage("Emergency Drop: No Fuel", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
-                    return;
+                    goto exit;
                 }
-                float throttleLevel = part.vessel.ctrlState.mainThrottle;
                 if ((part.vessel.altitude < part.vessel.mainBody.minOrbitalDistance - part.vessel.mainBody.Radius + heightAboveMin))
                 {
                     //I don't think this ever gets triggered
-                    SetSCState(false);
                     ScreenMessages.PostScreenMessage("Emergency Drop: Too Close", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
-                    return;
+                    goto exit;
+                }
+                //Supercruise Code
+                float throttleLevel = part.vessel.ctrlState.mainThrottle;
+                limitVel = GetLimitVelocity();
+                desiredVel = Mathf.Clamp(throttleLevel * limitVel, speedRange[0], speedRange[1]);
+                currentVel = Mathf.Clamp(Mathf.Lerp(currentVel, desiredVel, accelerationRate * Time.fixedDeltaTime), speedRange[0], limitVel);
+                Vector3d translatedVector = part.vessel.GetWorldPos3D() + part.vessel.transform.up.normalized * currentVel * Time.fixedDeltaTime;
+                cbDistsToWarpLoc.Clear();
+                //This operation might add a bit of lag, but you dont want people to warp into bodies
+                foreach (CelestialBody b in FlightGlobals.Bodies)
+                {
+                    cbDistsToWarpLoc.Add(b, (translatedVector - b.position).sqrMagnitude);
+                }
+                CelestialBody closestBody = cbDistsToWarpLoc.Aggregate((l, r) => l.Value < r.Value ? l : r).Key;
+                if (cbDistsToWarpLoc[closestBody] > Math.Pow(closestBody.minOrbitalDistance + heightAboveMin, 2))
+                {
+                    if (FlightGlobals.VesselsLoaded.Count > 1) part.vessel.SetPosition(translatedVector);
+                    else FloatingOrigin.SetOutOfFrameOffset(translatedVector);
                 }
                 else
                 {
-                    limitVel = GetLimitVelocity();
-                    desiredVel = Mathf.Clamp(throttleLevel * limitVel, speedRange[0], speedRange[1]);
-                    currentVel = Mathf.Clamp(Mathf.Lerp(currentVel, desiredVel, accelerationRate * Time.fixedDeltaTime), speedRange[0], limitVel);
-                    Vector3d translatedVector = part.vessel.GetWorldPos3D() + part.vessel.transform.up.normalized * currentVel * Time.fixedDeltaTime;
-                    cbDistsToWarpLoc.Clear();
-                    //This operation might add a bit of lag, but you dont want people to warp into bodies
-                    foreach (CelestialBody b in FlightGlobals.Bodies)
-                    {
-                        cbDistsToWarpLoc.Add(b, (translatedVector - b.position).sqrMagnitude);
-                    }
-                    CelestialBody closestBody = cbDistsToWarpLoc.Aggregate((l, r) => l.Value < r.Value ? l : r).Key;
-                    if (cbDistsToWarpLoc[closestBody] > Math.Pow(closestBody.minOrbitalDistance + heightAboveMin, 2))
-                    {
-                        if (FlightGlobals.VesselsLoaded.Count > 1) part.vessel.SetPosition(translatedVector);
-                        else FloatingOrigin.SetOutOfFrameOffset(translatedVector);
-                    }
-                    else
-                    {
-                        SetSCState(false);
-                        ScreenMessages.PostScreenMessage("Emergency Drop: Impact Imminent", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
-                        return;
-                    }
-                    disengageAtTgt = (part.vessel.targetObject != null) ? RendezvousCheck() : disengageAtTgt = false;
-                    if (disengageAtTgt) flightInfoStatus = 1; else flightInfoStatus = 0;
-                    if (!PauseMenu.isOpen)
-                    {
-                        FlightInputHandler.fetch.stageLock = true;
-                        TimeWarp.SetRate(0, true, postScreenMessage: false);
-                    }
-                    SetSpeedDisplay();
+                    ScreenMessages.PostScreenMessage("Emergency Drop: Impact Imminent", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
+                    goto exit;
                 }
+                disengageAtTgt = (part.vessel.targetObject is object) ? RendezvousCheck() : false;
+                if (disengageAtTgt) flightInfoStatus = 1; else flightInfoStatus = 0;
+                if (!PauseMenu.isOpen)
+                {
+                    FlightInputHandler.fetch.stageLock = true;
+                    TimeWarp.SetRate(0, true, postScreenMessage: false);
+                }
+                SetSpeedDisplay();
+                return;
+                //In case requirements were not met, leave SC
+                exit:
+                SetSCState(false);
+                return;
             }
         }
 
@@ -199,9 +232,6 @@ namespace kLeapDrive
         //Format our velocity and display it
         public void SetSpeedDisplay()
         {
-            if (currentVel < 1000000) formattedVelString = (currentVel / 1000).ToString("F1") + "km/s";
-            else if (currentVel < 0.1 * c) formattedVelString = (currentVel / 1000000).ToString("F2") + "Mm/s";
-            else formattedVelString = (currentVel / c).ToString("F2") + "c";
             switch (flightInfoStatus)
             {
                 case 0:
@@ -217,8 +247,18 @@ namespace kLeapDrive
                     speedDisplay.textTitle.color = defaultTitleColor;
                     break;
             }
-            speedDisplay.textSpeed.text = formattedVelString;
+            speedDisplay.textSpeed.text = FormatSupercruiseVelocity(currentVel);
             //Is this overcomplicated?
+        }
+
+        public string FormatSupercruiseVelocity(float vel)
+        {
+            switch (vel)
+            {
+                case float n when n < 1_000_000: return (vel / 1000).ToString("F1") + " km/s";
+                case float n when n < 0.1 * c: return (vel / 1000000).ToString("F2") + " Mm/s"; ;
+                default: return (vel / c).ToString("F2") + " c"; 
+            }
         }
 
         //Determine the highest possible velocity in the current scenario based on distance to celestial bodies.
@@ -263,16 +303,11 @@ namespace kLeapDrive
         public bool RendezvousCheck()
         {
             Vessel lockedTgt = part.vessel.targetObject?.GetVessel();
-            if (lockedTgt != null)
+            if (lockedTgt is object)
             {         
                 Vector3d tgtRelPos = part.vessel.GetWorldPos3D() - lockedTgt.GetWorldPos3D();
-                if (tgtRelPos.sqrMagnitude < (destinationLockRange * destinationLockRange) && lockedTgt.mainBody == part.vessel.mainBody)
-                {
-                    if (!LineAndSphereIntersects(part.vessel.GetWorldPos3D(), lockedTgt.GetWorldPos3D(), part.vessel.mainBody.position, part.vessel.mainBody.minOrbitalDistance))
-                    {
-                        return true;
-                    }
-                }
+                if (tgtRelPos.sqrMagnitude > (destinationLockRange * destinationLockRange) || lockedTgt.mainBody != part.vessel.mainBody) return false;
+                if (!LineAndSphereIntersects(part.vessel.GetWorldPos3D(), lockedTgt.GetWorldPos3D(), part.vessel.mainBody.position, part.vessel.mainBody.minOrbitalDistance)) return true;
             }
             return false;
         }
@@ -297,13 +332,23 @@ namespace kLeapDrive
         public void CommenceJumpSequence()
         {
             CelestialBody targetDestination = part.vessel.patchedConicSolver.targetBody;
-            //Vector3 diff = currentVessel.patchedConicSolver.targetBody.GetTransform().position - currentVessel.GetTransform().position;
-            if (targetDestination != null && targetDestination != part.vessel.mainBody && part.vessel.altitude > (part.vessel.mainBody.minOrbitalDistance - part.vessel.mainBody.Radius))
+            if (part.vessel.altitude < part.vessel.mainBody.minOrbitalDistance - part.vessel.mainBody.Radius) { ScreenMessages.PostScreenMessage("Cannot Jump, Mass Locked", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
+            if (part.vessel.GetTotalMass() > MassLimit) { ScreenMessages.PostScreenMessage("Cannot Jump, Vessel exceeds Mass Limit", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
+            if (targetDestination is null || targetDestination == part.vessel.mainBody) { ScreenMessages.PostScreenMessage("Cannot Jump, Invalid Target", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
+            if (targetDestination.Mass < MinJumpTargetMass) { ScreenMessages.PostScreenMessage("Cannot Jump, Target too small", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
+            double jumpDistance = (part.vessel.GetWorldPos3D() - targetDestination.position).magnitude;
+            double fuelRequired = Math.Max(MinJumpFuelUsage, (jumpDistance / ly) * FuelPerLY);
+            Debug.Log(fuelRequired);
+            if (ConsumeResource(propellantID, fuelRequired, true)) HyperspaceJump(targetDestination);
+            else ScreenMessages.PostScreenMessage("Insufficient Fuel for Jump, need " + fuelRequired.ToString("F0"), 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
+            /*if (targetDestination != null && targetDestination != part.vessel.mainBody && part.vessel.altitude > (part.vessel.mainBody.minOrbitalDistance - part.vessel.mainBody.Radius))
             {
                 double jumpDistance = (part.vessel.GetWorldPos3D() - targetDestination.position).magnitude;
-                ConsumeResource(propellantID, (jumpDistance / ly) * FuelPerLY);
-                HyperspaceJump(targetDestination);
-            }
+                double fuelRequired = Math.Max(MinJumpFuelUsage, (jumpDistance / ly) * FuelPerLY);
+                Debug.Log(fuelRequired);
+                if (ConsumeResource(propellantID, fuelRequired)) HyperspaceJump(targetDestination);
+                else ScreenMessages.PostScreenMessage("Insufficient Fuel for Jump, need " + fuelRequired.ToString("F0"), 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
+            }*/
         }
 
         //Actually jumps the ship
@@ -332,7 +377,6 @@ namespace kLeapDrive
                 if (available < amount) return false;
                 part.RequestResource(resourceID, amount);
                 return true;
-                
             }
             float received = (float) part.RequestResource(resourceID, amount);
             return Mathf.Approximately(received, (float)amount);
