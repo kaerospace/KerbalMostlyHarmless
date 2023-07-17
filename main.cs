@@ -1,4 +1,9 @@
-﻿using System;
+﻿/*-----------------------------------------
+Source code copyright: All Rights Reserved
+https://github.com/kaerospace, 2023
+-----------------------------------------*/
+
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
