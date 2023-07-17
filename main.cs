@@ -99,20 +99,6 @@ or {FuelPerLY:N1} per light year
 <color=#FFAB0F>(whichever is greater)</color>";
         }
 
-        //Store the speed display so we can mess with it later
-        public void OnGUI()
-        {
-            if (speedDisplay == null)
-            {
-                try
-                {
-                    speedDisplay = GameObject.FindObjectOfType<SpeedDisplay>();
-                    defaultTitleColor = speedDisplay.textTitle.color;
-                }
-                catch { }
-            }
-        }
-
         //Set up editor event hook
         public override void OnStart(StartState state)
         {
@@ -285,7 +271,15 @@ or {FuelPerLY:N1} per light year
         {
             if (vesselIsSupercruising)
             {
-                speedDisplay = speedDisplay = GameObject.FindObjectOfType<SpeedDisplay>();
+                if (speedDisplay == null)
+                {
+                    try
+                    {
+                        speedDisplay = GameObject.FindObjectOfType<SpeedDisplay>();
+                        defaultTitleColor = speedDisplay.textTitle.color;
+                    }
+                    catch { }
+                }
                 //Sometimes this breaks, not sure why
                 SetSpeedDisplay();
             }
