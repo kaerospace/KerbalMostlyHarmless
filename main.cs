@@ -28,15 +28,14 @@ namespace kLeapDrive
         private sbyte flightInfoStatus = -1; //-1: Not Supercruising, 0: Supercruising, 1: Ready to drop out at target
         private double distanceFromTarget;
         private SpeedDisplay speedDisplay;
-        private Color defaultTitleColor;
         private Dictionary<CelestialBody, double> cbDistsToWarpLoc = new Dictionary<CelestialBody, double>();
         private ModuleChargeGenerator generator; //There should not be more than one per part anyway
         #endregion
 
         #region Constants
         public readonly static Color alertColor = new Color(1.0f, 0.65f, 0.0f);
+        private readonly static Color defaultTitleColor = new Color(0.0f, 1.0f, 0.0f);
         private readonly static int c = 299_792_458;
-        private readonly static double ly = 9.461e+15;
         private readonly static float heightAboveMin = 10_000.0f;
         private readonly static float destinationLockRange = 300_000.0f; //ED Lock-Range is ~1Mm (1_000_000), default reduced to 300km for scale reasons
         private readonly static float rendezvousDistance = 8_000.0f;
@@ -56,7 +55,7 @@ namespace kLeapDrive
         [KSPField]
         public double MinJumpFuelUsage = 0.0d; //In-System jumps are very cheap if calculating based on LY, to balance it, a base cost is needed
         [KSPField]
-        public double FuelPerLY = 0.0d;
+        public double FuelPerLs = 0.0d; //1 Ls = 1 Light Second, ~300_000 km
         [KSPField]
         public string FuelResource = "LiquidFuel";
         [KSPField]
@@ -95,7 +94,7 @@ $@"<b>Max. Vessel Mass:</b> {MassLimit:N2} t
 <color=#99FF00>Propellant:</color>
 - <b>{FuelResource}</b>
 Minimum {MinJumpFuelUsage:N1}
-or {FuelPerLY:N1} per light year
+or {FuelPerLs:N1} per light sec.
 <color=#FFAB0F>(whichever is greater)</color>";
         }
 
@@ -195,6 +194,7 @@ or {FuelPerLY:N1} per light year
             }
             else
             {
+                GetSpeedDisplay();  
                 currentVel = speedRange[0];
                 flightInfoStatus = 0;
                 Fields["targetDistanceString"].guiActive = true;
@@ -255,7 +255,7 @@ or {FuelPerLY:N1} per light year
                     if (TimeWarp.CurrentRateIndex != 0 && TimeWarp.WarpMode != TimeWarp.Modes.LOW) TimeWarp.SetRate(0, true, postScreenMessage: false);
                 }
                 //part.vessel.GetComponent<Rigidbody>().freezeRotation = true;
-                //part.vessel.GetComponent<Rigidbody>().angularVelocity = Vector3.zero; //NOTE TO SELF, CONTINUE ON THIS TOMORROW
+                //part.vessel.GetComponent<Rigidbody>().angularVelocity = Vector3.zero; //Figure this out eventually
                 //part.vessel.GetComponent<Rigidbody>().freezeRotation = false;
                 SetSpeedDisplay();
                 return;
@@ -266,20 +266,22 @@ or {FuelPerLY:N1} per light year
             }
         }
 
+        [KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Fix Speed Display", guiActiveUnfocused = false, isPersistent = false)]
+        public void GetSpeedDisplay()
+        {
+            try
+            {
+                speedDisplay = GameObject.FindObjectOfType<SpeedDisplay>();
+            }
+            catch { }
+        }
+
+
         //Navball Updates
         public void LateUpdate()
         {
             if (vesselIsSupercruising)
             {
-                if (speedDisplay == null)
-                {
-                    try
-                    {
-                        speedDisplay = GameObject.FindObjectOfType<SpeedDisplay>();
-                        defaultTitleColor = speedDisplay.textTitle.color;
-                    }
-                    catch { }
-                }
                 //Sometimes this breaks, not sure why
                 SetSpeedDisplay();
             }
@@ -323,10 +325,11 @@ or {FuelPerLY:N1} per light year
         //Format the distance to better fit the distances we are dealing with
         public string FormatDistance(double dst)
         {
+            dst = Math.Abs(dst);
             switch (dst)
             {
                 case double n when n < 1_000_000: return (dst / 1000).ToString("F1") + " km";
-                case double n when n < 0.1 * c: return (dst / 1000000).ToString("F2") + " Mm"; ;
+                case double n when n < 0.1 * c: return (dst / 1000000).ToString("F2") + " Mm";
                 default: return (dst / c).ToString("F2") + " Ls";
             }
         }
@@ -392,7 +395,7 @@ or {FuelPerLY:N1} per light year
             Vector3d jumpVector = targetDestination.position - part.vessel.GetWorldPos3D();
             if (!NearCollinearCheck(part.vessel.transform.up, jumpVector, 5.0f)) { ScreenMessages.PostScreenMessage("Align with Target Destination", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
             //Doesn't work for some reason: if (LineAndSphereIntersects(part.vessel.GetWorldPos3D(), targetDestination.position, part.vessel.mainBody.position, part.vessel.mainBody.minOrbitalDistance)) { ScreenMessages.PostScreenMessage("Target Obscured", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
-            double fuelRequired = Math.Max(MinJumpFuelUsage, (jumpVector.magnitude / ly) * FuelPerLY);
+            double fuelRequired = Math.Max(MinJumpFuelUsage, (jumpVector.magnitude / c) * FuelPerLs);
             //Ew, nested if statement
             if (generator.FillStatus())
             {
@@ -409,13 +412,14 @@ or {FuelPerLY:N1} per light year
         public void HyperspaceLeap(CelestialBody target)
         {
             vesselIsSupercruising = false;
-            OrbitPhysicsManager.HoldVesselUnpack(1);
+            part.vessel.GoOnRails();
             FlightGlobals.fetch.SetShipOrbit(target.flightGlobalsIndex, 0, target.minOrbitalDistance * 2, 0, 0, 0, 0, 0);
             //ED points you at the star, but I'm feeling nice :)
             Vector3d radial = part.vessel.GetWorldPos3D() - part.vessel.mainBody.position;
             part.vessel.SetRotation(Quaternion.LookRotation(RandomOrthoVector(radial), radial)); //Points outwards for some reason, but that's what we want, so...
             //Post-Jump dethrottle so you don't go where you don't want to go (like into a star)
             currentVel = speedRange[0];
+            part.vessel.GoOffRails();
             SetSCState(true);
         }
 
