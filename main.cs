@@ -11,7 +11,6 @@ using System.Text;
 using System.IO;
 using UnityEngine;
 using KSP.UI.Screens.Flight;
-using UnityEngine.Diagnostics;
 
 #region Silencers
 #pragma warning disable IDE0044
@@ -71,7 +70,7 @@ namespace kLeapDrive
         [KSPField(guiActive = true, guiActiveEditor = false, isPersistant = true, guiName = "Supercruise on Jump")]
         [UI_Toggle(enabledText = "Yes", disabledText = "No")]
         public bool autoSCOnJump = true;
-        [KSPField(guiActive = true, guiActiveEditor = false, isPersistant = true, guiName = "Cancel Angular Momentum")]
+        [KSPField(guiActive = true, guiActiveEditor = false, isPersistant = true, guiName = "[This button is WIP]")]
         [UI_Toggle(enabledText = "Yes", disabledText = "No")]
         public bool cancelAngularMomentum = true;
         [KSPField(isPersistant = true)]
@@ -196,6 +195,7 @@ or {fuelPerLs:N1} per light sec.
                 currentVel = speedRange[0];
                 FlightGlobals.SetSpeedMode(FlightGlobals.SpeedDisplayModes.Orbit);
                 speedDisplay.textTitle.color = defaultTitleColor;
+                part.FindModuleImplementing<ModuleSCFX>().DestroyParticleSystem();
             }
             else
             {
@@ -204,6 +204,7 @@ or {fuelPerLs:N1} per light sec.
                 flightInfoStatus = 0;
                 Fields["targetDistanceString"].guiActive = true;
                 Fields["safeDisengage"].guiActive = true;
+                part.FindModuleImplementing<ModuleSCFX>().SetupParticleSystem();
             }
             //Nuh uh, you need to charge again ;)
             if (generator.IsActivated) generator.StopResourceConverter();
@@ -282,14 +283,6 @@ or {fuelPerLs:N1} per light sec.
             {
                 //Sometimes this breaks, not sure why
                 SetSpeedDisplay();
-            }
-        }
-
-        public void Update()
-        {
-            if (cancelAngularMomentum)
-            {
-                vessel.angularVelocity.Zero();
             }
         }
 
@@ -524,7 +517,7 @@ or {fuelPerLs:N1} per light sec.
             if (IsActivated)
             {
                 if (msg is null) msg = ScreenMessages.PostScreenMessage("test", 1, ScreenMessageStyle.UPPER_CENTER);
-                
+                if (TimeWarp.CurrentRateIndex != 0) TimeWarp.SetRate(0, true, postScreenMessage: false);
                 double chargeRatio = chargeResource.amount / chargeResource.maxAmount;
                 int barCharge = (int)(chargeRatio * width);
                 string progressBar = $"<color=#FFA500>[{new string(barUnit, barCharge)}<color=#000000>{new string(barUnit, width - barCharge)}</color>]</color>";
@@ -574,7 +567,6 @@ or {fuelPerLs:N1} per light sec.
         }
 
         //Use Unity Particle System instead of KSP built-in stuff, it works better
-        [KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Start SCFX [DEBUG]", guiActiveUnfocused = false, isPersistent = false)]
         public void SetupParticleSystem()
         {
             float size = Mathf.Max(part.vessel.vesselSize.x, part.vessel.vesselSize.z) * factor;
@@ -609,22 +601,15 @@ or {fuelPerLs:N1} per light sec.
             _trails.widthOverTrail = new ParticleSystem.MinMaxCurve(0.2f, _curve);
             _trails.enabled = true;
             //Set Particle Material
-            Material mat = new Material(Shader.Find("Unlit/Transparent"))
-            {
-                mainTexture = GameDatabase.Instance.GetTexture(texture, false)
-            };
+            Material mat = new Material(Shader.Find("Unlit/Transparent")) { mainTexture = GameDatabase.Instance.GetTexture(texture, false) };
             //Set Trail Material
-            Material trail = new Material(Shader.Find("Particles/Standard Unlit"))
-            {
-                color = Color.white
-            };
+            Material trail = new Material(Shader.Find("Particles/Standard Unlit")) { color = Color.white };
             //Apply Materials
             renderer.material = mat;
             renderer.trailMaterial = trail;
         }
 
         //Destroy the Component outright, I don't think keeping it is smart (could disable the emission module though)
-        [KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Destroy SCFX [DEBUG]", guiActiveUnfocused = false, isPersistent = false)]
         public void DestroyParticleSystem()
         {
             Destroy(particles);
