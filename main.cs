@@ -8,8 +8,10 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.IO;
 using UnityEngine;
 using KSP.UI.Screens.Flight;
+using UnityEngine.Diagnostics;
 
 #region Silencers
 #pragma warning disable IDE0044
@@ -66,6 +68,12 @@ namespace kLeapDrive
         public bool canEngage = false;
         [KSPField(guiActive = false, guiActiveEditor = false, guiName = "Can disengage safely")]
         public bool safeDisengage = false;
+        [KSPField(guiActive = true, guiActiveEditor = false, isPersistant = true, guiName = "Supercruise on Jump")]
+        [UI_Toggle(enabledText = "Yes", disabledText = "No")]
+        public bool autoSCOnJump = true;
+        [KSPField(guiActive = true, guiActiveEditor = false, isPersistant = true, guiName = "Cancel Angular Momentum")]
+        [UI_Toggle(enabledText = "Yes", disabledText = "No")]
+        public bool cancelAngularMomentum = true;
         [KSPField(isPersistant = true)]
         public bool vesselIsSupercruising = false;
         [KSPField(isPersistant = true)]
@@ -179,7 +187,7 @@ or {FuelPerLs:N1} per light sec.
                 Debug.Log(currentVel);
                 Debug.Log(currentVel > maximumSafeDisengageSpeed);
                 //Breaks your ship if you go too fast, because balancing or something
-                if (currentVel > maximumSafeDisengageSpeed)
+                if (currentVel > maximumSafeDisengageSpeed && !CheatOptions.NoCrashDamage)
                 {
                     ScreenMessages.PostScreenMessage("Unsafe Disengage, too fast!", 3.0f, ScreenMessageStyle.UPPER_CENTER, Color.red);
                     for (int i = 0; i < Math.Max(3, part.vessel.parts.Count/20); i++)
@@ -254,9 +262,6 @@ or {FuelPerLs:N1} per light sec.
                     FlightInputHandler.fetch.stageLock = true;
                     if (TimeWarp.CurrentRateIndex != 0 && TimeWarp.WarpMode != TimeWarp.Modes.LOW) TimeWarp.SetRate(0, true, postScreenMessage: false);
                 }
-                //part.vessel.GetComponent<Rigidbody>().freezeRotation = true;
-                //part.vessel.GetComponent<Rigidbody>().angularVelocity = Vector3.zero; //Figure this out eventually
-                //part.vessel.GetComponent<Rigidbody>().freezeRotation = false;
                 SetSpeedDisplay();
                 return;
                 //In case requirements were not met, leave SC
@@ -269,11 +274,7 @@ or {FuelPerLs:N1} per light sec.
         [KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Fix Speed Display", guiActiveUnfocused = false, isPersistent = false)]
         public void GetSpeedDisplay()
         {
-            try
-            {
-                speedDisplay = GameObject.FindObjectOfType<SpeedDisplay>();
-            }
-            catch { }
+            speedDisplay = GameObject.FindObjectOfType<SpeedDisplay>();
         }
 
 
@@ -284,6 +285,14 @@ or {FuelPerLs:N1} per light sec.
             {
                 //Sometimes this breaks, not sure why
                 SetSpeedDisplay();
+            }
+        }
+
+        public void Update()
+        {
+            if (cancelAngularMomentum)
+            {
+                vessel.angularVelocity.Zero();
             }
         }
 
@@ -307,6 +316,7 @@ or {FuelPerLs:N1} per light sec.
                     speedDisplay.textTitle.color = defaultTitleColor;
                     break;
             }
+
             speedDisplay.textSpeed.text = FormatVelocity(currentVel);
             //Is this overcomplicated?
         }
@@ -420,7 +430,7 @@ or {FuelPerLs:N1} per light sec.
             //Post-Jump dethrottle so you don't go where you don't want to go (like into a star)
             currentVel = speedRange[0];
             part.vessel.GoOffRails();
-            SetSCState(true);
+            SetSCState(autoSCOnJump);
         }
 
         //Consumes specified amount of fuel (returns false if there was not enough fuel, true if, well, true)
@@ -534,6 +544,75 @@ or {FuelPerLs:N1} per light sec.
             if (!status) { ScreenMessages.PostScreenMessage($"Drive needs to be charged!", 3.0f, ScreenMessageStyle.UPPER_CENTER, ModuleLeapDrive.alertColor); return false; }
             else if (dischargeIfFull) StopResourceConverter();
             return status;
+        }
+    }
+
+    public class ModuleSCFX : PartModule
+    {
+        #region Variable (Singular)
+        public ParticleSystem particles;
+        #endregion
+
+        #region KSPFields
+
+        #endregion
+
+        //Only show the particles on the active vessel
+        public void Update()
+        {
+            if (FlightGlobals.ActiveVessel != part.vessel || !HighLogic.LoadedSceneIsFlight) Destroy(particles);
+        }
+
+        //Use Unity Particle System instead of KSP built-in stuff, it works better
+        [KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Start SCFX [DEBUG]", guiActiveUnfocused = false, isPersistent = false)]
+        public void SetupParticleSystem()
+        {
+            particles = part.vessel.gameObject.AddOrGetComponent<ParticleSystem>();
+            //Get all the modules
+            ParticleSystemRenderer renderer = particles.GetComponent<ParticleSystemRenderer>();
+            ParticleSystem.MainModule _main = particles.main;
+            ParticleSystem.ShapeModule _shape = particles.shape;
+            ParticleSystem.EmissionModule _emission = particles.emission;
+            ParticleSystem.TrailModule _trails = particles.trails;
+            //Set Main
+            _main.startSize = 1.0f;
+            _main.startSpeed = 100.0f;
+            //Set Emitter Cylinder
+            _shape.shapeType = ParticleSystemShapeType.Cone;
+            _shape.angle = 0;
+            _shape.radius = Mathf.Max(part.vessel.vesselSize.x, part.vessel.vesselSize.z) * 1.0f;
+            _shape.radiusThickness = 0;
+            _shape.rotation = new Vector3(90.0f, 0.0f, 0.0f);
+            _shape.position = new Vector3(0.0f, 100.0f, 0.0f);
+            //Enable Emission
+            _emission.rateOverTime = 10.0f;
+            _emission.enabled = true;
+            //Trail Width Curve
+            AnimationCurve _curve = new AnimationCurve();
+            _curve.AddKey(0.0f, 1.0f);
+            _curve.AddKey(1.0f, 0.0f);
+            //Set Trails
+            _trails.ratio = 0.9f;
+            _trails.lifetime = new ParticleSystem.MinMaxCurve(0.02f, 0.1f);
+            _trails.widthOverTrail = new ParticleSystem.MinMaxCurve(0.2f, _curve);
+            _trails.enabled = true;
+            //Set Particle Material
+            Texture2D tex = GameDatabase.Instance.GetTexture("kAerospace/FX/scfx", false);
+            Material mat = new Material(Shader.Find("Unlit/Transparent"));
+            mat.mainTexture = tex;
+            //Set Trail Material
+            Material trail = new Material(Shader.Find("Particles/Standard Unlit"));
+            trail.color = Color.white;
+            //Apply Materials
+            renderer.material = mat;
+            renderer.trailMaterial = trail;
+        }
+
+        //Destroy the Component outright, I don't think keeping it is smart
+        [KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Destroy SCFX [DEBUG]", guiActiveUnfocused = false, isPersistent = false)]
+        public void DestroyParticleSystem()
+        {
+            Destroy(particles);
         }
     }
 }
