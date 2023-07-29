@@ -269,10 +269,10 @@ or {fuelPerLs:N1} per light sec.
             }
         }
 
-        [KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Fix Speed Display", guiActiveUnfocused = false, isPersistent = false)]
+        //[KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Fix Speed Display", guiActiveUnfocused = false, isPersistent = false)]
         public void GetSpeedDisplay()
         {
-            speedDisplay = GameObject.FindObjectOfType<SpeedDisplay>();
+            speedDisplay = KSP.UI.Screens.Flight.SpeedDisplay.Instance;
         }
 
 
