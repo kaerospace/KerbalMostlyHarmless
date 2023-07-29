@@ -49,19 +49,19 @@ namespace kLeapDrive
 
         #region KSPFields
         [KSPField]
-        public double MassLimit = double.MaxValue;
+        public double massLimit = double.MaxValue;
         [KSPField]
-        public double MinJumpTargetMass = 0.0d; //Limits minimum target mass, ex. Asteroid moons shouldn't be able to be jumped to, as their gravity is too weak
+        public double minJumpTargetMass = 0.0d; //Limits minimum target mass, ex. Asteroid moons shouldn't be able to be jumped to, as their gravity is too weak
         [KSPField]
         public double SCFuelRate = 0.0d; //Consume a flat amount of fuel no matter the speed, in Elite Dangerous this rate is determined by the powerplant specifics, which is not modeled here.
         [KSPField]
-        public double MinJumpFuelUsage = 0.0d; //In-System jumps are very cheap if calculating based on LY, to balance it, a base cost is needed
+        public double minJumpFuelUsage = 0.0d; //In-System jumps are very cheap if calculating based on LY, to balance it, a base cost is needed
         [KSPField]
-        public double FuelPerLs = 0.0d; //1 Ls = 1 Light Second, ~300_000 km
+        public double fuelPerLs = 0.0d; //1 Ls = 1 Light Second, ~300_000 km
         [KSPField]
-        public string FuelResource = "LiquidFuel";
+        public string fuelResource = "LiquidFuel";
         [KSPField]
-        public bool AllowNonStellarTargets = true; //Makes drive act like Capital Ship FSDs in ED, allowing you to jump to any target
+        public bool allowNonStellarTargets = true; //Makes drive act like Capital Ship FSDs in ED, allowing you to jump to any target
         [KSPField(guiActive = false, guiActiveEditor = false, guiName = "Distance to Target")]
         public string targetDistanceString = "No Target";
         [KSPField(guiActive = false, guiActiveEditor = true, guiName = "Vessel within FTL Mass Limit")]
@@ -88,21 +88,21 @@ namespace kLeapDrive
         public override string GetInfo()
         {
             return
-$@"<b>Max. Vessel Mass:</b> {MassLimit:N2} t
+$@"<b>Max. Vessel Mass:</b> {massLimit:N2} t
 
 <b><color=#99FF00>Supercruise</color></b>
 <b>Min. Speed:</b> {FormatVelocity(speedRange[0])}
 <b>Max. Speed:</b> {FormatVelocity(speedRange[1])}
 <b>Safe Disengage:</b> < {FormatVelocity(maximumSafeDisengageSpeed)}
 <color=#99FF00>Propellant:</color>
-- <b>{FuelResource}:</b> {SCFuelRate:N3}/sec.
+- <b>{fuelResource}:</b> {SCFuelRate:N3}/sec.
 
 <b><color=#99FF00>Leaping</color></b>
-{(AllowNonStellarTargets ? $"<b>Can leap to any body </b>\n<i>(with Mass > {MinJumpTargetMass:E2} kg)</i>" : "<b>Can only leap to stars</b>")}
+{(allowNonStellarTargets ? $"<b>Can leap to any body </b>\n<i>(with Mass > {minJumpTargetMass:E2} kg)</i>" : "<b>Can only leap to stars</b>")}
 <color=#99FF00>Propellant:</color>
-- <b>{FuelResource}</b>
-Minimum {MinJumpFuelUsage:N1}
-or {FuelPerLs:N1} per light sec.
+- <b>{fuelResource}</b>
+Minimum {minJumpFuelUsage:N1}
+or {fuelPerLs:N1} per light sec.
 <color=#FFAB0F>(whichever is greater)</color>";
         }
 
@@ -117,14 +117,13 @@ or {FuelPerLs:N1} per light sec.
         public override void OnLoad(ConfigNode node)
         {
             base.OnLoad(node);
-            Debug.Log(FuelResource);
-            propellantID = PartResourceLibrary.Instance.GetDefinition(FuelResource).id;
+            propellantID = PartResourceLibrary.Instance.GetDefinition(fuelResource).id;
         }
 
         //Display whether or not the ship is in the mass limit for convenience
         public void onEditorShipModified(ShipConstruct sc)
         {
-            canEngage = sc.GetTotalMass() < MassLimit;
+            canEngage = sc.GetTotalMass() < massLimit;
             MonoUtilities.RefreshContextWindows(part);
         }
 
@@ -146,7 +145,7 @@ or {FuelPerLs:N1} per light sec.
         public void ToggleSupercruise()
         {
             generator = part.FindModuleImplementing<ModuleChargeGenerator>();
-            if (part.vessel.GetTotalMass() > MassLimit)
+            if (part.vessel.GetTotalMass() > massLimit)
             {
                 ScreenMessages.PostScreenMessage("Vessel exceeds mass limit, cannot engage!", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
                 goto failure;
@@ -184,8 +183,6 @@ or {FuelPerLs:N1} per light sec.
                 {
                     FlightGlobals.fetch.SetShipOrbitRendezvous(part.vessel.targetObject.GetVessel(), UnityEngine.Random.onUnitSphere * rendezvousDistance, Vector3d.zero);
                 }
-                Debug.Log(currentVel);
-                Debug.Log(currentVel > maximumSafeDisengageSpeed);
                 //Breaks your ship if you go too fast, because balancing or something
                 if (currentVel > maximumSafeDisengageSpeed && !CheatOptions.NoCrashDamage)
                 {
@@ -399,13 +396,13 @@ or {FuelPerLs:N1} per light sec.
             CelestialBody targetDestination = part.vessel.patchedConicSolver.targetBody;
             //A bit many if statements, but I don't think theres a cleaner way
             if (part.vessel.altitude < part.vessel.mainBody.minOrbitalDistance - part.vessel.mainBody.Radius) { ScreenMessages.PostScreenMessage("Mass Locked, cannot engage!", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
-            if (part.vessel.GetTotalMass() > MassLimit) { ScreenMessages.PostScreenMessage("Vessel exceeds Mass Limit, cannot engage!", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
-            if (targetDestination is null || targetDestination == part.vessel.mainBody || !(AllowNonStellarTargets || targetDestination.isStar)) { ScreenMessages.PostScreenMessage("Cannot Leap, Invalid Target", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
-            if (targetDestination.Mass < MinJumpTargetMass) { ScreenMessages.PostScreenMessage("Cannot Leap, Target too small", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
+            if (part.vessel.GetTotalMass() > massLimit) { ScreenMessages.PostScreenMessage("Vessel exceeds Mass Limit, cannot engage!", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
+            if (targetDestination is null || targetDestination == part.vessel.mainBody || !(allowNonStellarTargets || targetDestination.isStar)) { ScreenMessages.PostScreenMessage("Cannot Leap, Invalid Target", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
+            if (targetDestination.Mass < minJumpTargetMass) { ScreenMessages.PostScreenMessage("Cannot Leap, Target too small", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
             Vector3d jumpVector = targetDestination.position - part.vessel.GetWorldPos3D();
             if (!NearCollinearCheck(part.vessel.transform.up, jumpVector, 5.0f)) { ScreenMessages.PostScreenMessage("Align with Target Destination", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
             //Doesn't work for some reason: if (LineAndSphereIntersects(part.vessel.GetWorldPos3D(), targetDestination.position, part.vessel.mainBody.position, part.vessel.mainBody.minOrbitalDistance)) { ScreenMessages.PostScreenMessage("Target Obscured", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor); return; }
-            double fuelRequired = Math.Max(MinJumpFuelUsage, (jumpVector.magnitude / c) * FuelPerLs);
+            double fuelRequired = Math.Max(minJumpFuelUsage, (jumpVector.magnitude / c) * fuelPerLs);
             //Ew, nested if statement
             if (generator.FillStatus())
             {
@@ -414,7 +411,7 @@ or {FuelPerLs:N1} per light sec.
                     generator.StopResourceConverter();
                     HyperspaceLeap(targetDestination);
                 }
-                else ScreenMessages.PostScreenMessage($"Insufficient Fuel for Jump, need {fuelRequired:F0} {FuelResource}", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
+                else ScreenMessages.PostScreenMessage($"Insufficient Fuel for Jump, need {fuelRequired:F0} {fuelResource}", 3.0f, ScreenMessageStyle.UPPER_CENTER, alertColor);
             }
         }
 
@@ -554,7 +551,20 @@ or {FuelPerLs:N1} per light sec.
         #endregion
 
         #region KSPFields
-
+        [KSPField]
+        public string texture;
+        [KSPField]
+        public float scale;
+        [KSPField]
+        public float speed;
+        [KSPField]
+        public float intensity;
+        [KSPField]
+        public float life;
+        [KSPField]
+        public float factor;
+        [KSPField]
+        public float fwdOffset;
         #endregion
 
         //Only show the particles on the active vessel
@@ -567,6 +577,7 @@ or {FuelPerLs:N1} per light sec.
         [KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Start SCFX [DEBUG]", guiActiveUnfocused = false, isPersistent = false)]
         public void SetupParticleSystem()
         {
+            float size = Mathf.Max(part.vessel.vesselSize.x, part.vessel.vesselSize.z) * factor;
             particles = part.vessel.gameObject.AddOrGetComponent<ParticleSystem>();
             //Get all the modules
             ParticleSystemRenderer renderer = particles.GetComponent<ParticleSystemRenderer>();
@@ -575,17 +586,18 @@ or {FuelPerLs:N1} per light sec.
             ParticleSystem.EmissionModule _emission = particles.emission;
             ParticleSystem.TrailModule _trails = particles.trails;
             //Set Main
-            _main.startSize = 1.0f;
-            _main.startSpeed = 100.0f;
+            _main.startSize = scale;
+            _main.startSpeed = speed;
+            _main.startLifetime = life;
             //Set Emitter Cylinder
             _shape.shapeType = ParticleSystemShapeType.Cone;
             _shape.angle = 0;
-            _shape.radius = Mathf.Max(part.vessel.vesselSize.x, part.vessel.vesselSize.z) * 1.0f;
+            _shape.radius = size;
             _shape.radiusThickness = 0;
             _shape.rotation = new Vector3(90.0f, 0.0f, 0.0f);
-            _shape.position = new Vector3(0.0f, 100.0f, 0.0f);
+            _shape.position = new Vector3(0.0f, fwdOffset, 0.0f);
             //Enable Emission
-            _emission.rateOverTime = 10.0f;
+            _emission.rateOverTime = intensity * size; //Intensity based on cylinder diameter
             _emission.enabled = true;
             //Trail Width Curve
             AnimationCurve _curve = new AnimationCurve();
@@ -597,18 +609,21 @@ or {FuelPerLs:N1} per light sec.
             _trails.widthOverTrail = new ParticleSystem.MinMaxCurve(0.2f, _curve);
             _trails.enabled = true;
             //Set Particle Material
-            Texture2D tex = GameDatabase.Instance.GetTexture("kAerospace/FX/scfx", false);
-            Material mat = new Material(Shader.Find("Unlit/Transparent"));
-            mat.mainTexture = tex;
+            Material mat = new Material(Shader.Find("Unlit/Transparent"))
+            {
+                mainTexture = GameDatabase.Instance.GetTexture(texture, false)
+            };
             //Set Trail Material
-            Material trail = new Material(Shader.Find("Particles/Standard Unlit"));
-            trail.color = Color.white;
+            Material trail = new Material(Shader.Find("Particles/Standard Unlit"))
+            {
+                color = Color.white
+            };
             //Apply Materials
             renderer.material = mat;
             renderer.trailMaterial = trail;
         }
 
-        //Destroy the Component outright, I don't think keeping it is smart
+        //Destroy the Component outright, I don't think keeping it is smart (could disable the emission module though)
         [KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Destroy SCFX [DEBUG]", guiActiveUnfocused = false, isPersistent = false)]
         public void DestroyParticleSystem()
         {
