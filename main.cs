@@ -199,7 +199,6 @@ or {fuelPerLs:N1} per light sec.
             }
             else
             {
-                GetSpeedDisplay();  
                 currentVel = speedRange[0];
                 flightInfoStatus = 0;
                 Fields["targetDistanceString"].guiActive = true;
@@ -269,16 +268,11 @@ or {fuelPerLs:N1} per light sec.
             }
         }
 
-        //[KSPEvent(guiActive = true, active = true, guiActiveEditor = false, guiName = "Fix Speed Display", guiActiveUnfocused = false, isPersistent = false)]
-        public void GetSpeedDisplay()
-        {
-            speedDisplay = KSP.UI.Screens.Flight.SpeedDisplay.Instance;
-        }
-
-
         //Navball Updates
         public void LateUpdate()
         {
+            speedDisplay = KSP.UI.Screens.Flight.SpeedDisplay.Instance;
+            if (HighLogic.LoadedSceneIsFlight && !vesselIsSupercruising) speedDisplay.enabled = true;
             if (vesselIsSupercruising)
             {
                 //Sometimes this breaks, not sure why
@@ -291,6 +285,7 @@ or {fuelPerLs:N1} per light sec.
         //Display our velocity
         public void SetSpeedDisplay()
         {
+            speedDisplay.textSpeed.text = FormatVelocity(currentVel);
             switch (flightInfoStatus)
             {
                 case 0:
@@ -306,8 +301,6 @@ or {fuelPerLs:N1} per light sec.
                     speedDisplay.textTitle.color = defaultTitleColor;
                     break;
             }
-
-            speedDisplay.textSpeed.text = FormatVelocity(currentVel);
             //Is this overcomplicated?
         }
 
